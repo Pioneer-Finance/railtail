@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/half0wl/railtail/internal/config/parser"
 )
@@ -36,8 +37,12 @@ type Config struct {
 
 	InsecureSkipVerifyRaw string `flag:"insecure-skip-verify" env:"INSECURE_SKIP_VERIFY" default:"false" usage:"skip TLS certificate verification of an https target (not recommended)"`
 
+	KeepaliveIntervalRaw string `flag:"keepalive-interval" env:"KEEPALIVE_INTERVAL" default:"60s" usage:"how often to send traffic to the target so the tailscale path stays up (e.g. 60s; 0 disables)"`
+	KeepalivePath        string `flag:"keepalive-path" env:"KEEPALIVE_PATH" default:"/" usage:"path requested on the target's host by the keep-alive in HTTP mode; pick one that is cheap to answer"`
+
 	ForwardTrafficType ForwardTrafficType
 	InsecureSkipVerify bool
+	KeepaliveInterval  time.Duration
 	TargetURL          *url.URL
 }
 
@@ -78,6 +83,22 @@ func LoadConfig() (*Config, []error) {
 		}
 
 		cfg.InsecureSkipVerify = skip
+	}
+
+	if cfg.KeepaliveIntervalRaw != "" {
+		interval, err := time.ParseDuration(cfg.KeepaliveIntervalRaw)
+		switch {
+		case err != nil:
+			errors = append(errors, fmt.Errorf("keepalive-interval must be a duration such as 60s or 0: %w", err))
+		case interval < 0:
+			errors = append(errors, fmt.Errorf("keepalive-interval must not be negative, got %s", interval))
+		}
+
+		cfg.KeepaliveInterval = interval
+	}
+
+	if cfg.KeepalivePath != "" && !strings.HasPrefix(cfg.KeepalivePath, "/") {
+		errors = append(errors, fmt.Errorf("keepalive-path must start with /, got %q", cfg.KeepalivePath))
 	}
 
 	// Validate target-addr if it's set to either be a valid URL with a port or a valid address:port

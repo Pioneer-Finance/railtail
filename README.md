@@ -42,6 +42,8 @@ proxy, ensure you have a `http://` or `https://` in your `TARGET_ADDR`.
 | `TS_LOGIN_SERVER`    | `-ts-login-server` | Optional. Base URL of the control server. If you are using Headscale for your control server, use your Headscale instance's url. Defaults to using Tailscale. |
 | `TS_STATEDIR_PATH`   | `-ts-state-dir`    | Optional. Tailscale state dir. Defaults to `/tmp/railtail`.                                                                                                   |
 | `INSECURE_SKIP_VERIFY` | `-insecure-skip-verify` | Optional. Skip TLS certificate verification of an `https://` target. Defaults to `false`. Only enable for a target with a self-signed certificate you cannot replace. |
+| `KEEPALIVE_INTERVAL` | `-keepalive-interval` | Optional. How often to send a little traffic to the target so the Tailscale path stays up between requests. Defaults to `60s`; `0` disables it. See [Keep-alive](#keep-alive). |
+| `KEEPALIVE_PATH` | `-keepalive-path` | Optional. HTTP mode only: the path requested on the target's host by the keep-alive. Defaults to `/`. Choose something cheap to answer; any status code counts. |
 
 _CLI arguments will take precedence over environment variables._
 
@@ -53,10 +55,34 @@ _CLI arguments will take precedence over environment variables._
   target.
 - Prefer a tagged, single-use or ephemeral auth key. With the default
   `TS_STATEDIR_PATH` in `/tmp`, the node identity is lost on every redeploy
-  and the service re-registers with `TS_AUTH_KEY`.
+  and the service re-registers with `TS_AUTH_KEY` - so a single-use key only
+  works if `TS_STATEDIR_PATH` is on a volume. Otherwise the second deploy
+  waits at `NeedsLogin` forever and every request through it hangs.
 - The image runs as the distroless `nonroot` user. If you mount a Railway
   volume for `TS_STATEDIR_PATH`, it must be writable by that user (for
   example set `RAILWAY_RUN_UID=0`).
+
+### Keep-alive
+
+A Tailscale path that carries nothing for a couple of minutes has to be
+re-established before the next packet gets through. Against a node reached
+through a DERP relay, that made the first request after two and a half
+minutes of quiet take ~620ms instead of ~200ms, and a caller whose traffic
+comes in bursts paid it on almost every burst.
+
+So railtail sends a little traffic on a timer (`KEEPALIVE_INTERVAL`, 60s by
+default - under the ~2 minutes it takes the path to go cold):
+
+- **HTTP mode** requests `KEEPALIVE_PATH` on the target's host through the
+  same connection pool as forwarded traffic, which keeps both the Tailscale
+  path and a pooled connection open. Any response counts, so a path that
+  returns a quick 404 is ideal; avoid one that does real work.
+- **TCP mode** opens and closes a connection to `TARGET_ADDR`.
+
+A failing probe is logged once when it starts failing and once when it
+recovers. The HTTP pool also keeps up to 16 idle connections to the target
+(Go's default is 2, so concurrent requests beyond two paid a fresh handshake)
+and closes them after 5 minutes unused.
 
 ## About
 

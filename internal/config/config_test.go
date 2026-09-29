@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func load(t *testing.T, env map[string]string) (*Config, []error) {
@@ -52,6 +53,39 @@ func TestTargetCredentialsAreNotLogged(t *testing.T) {
 	for _, e := range errs {
 		if strings.Contains(e.Error(), "s3cret") {
 			t.Fatalf("password leaked in error: %v", e)
+		}
+	}
+}
+
+func TestKeepaliveDefaults(t *testing.T) {
+	cfg, errs := load(t, map[string]string{"TARGET_ADDR": "http://db:8086"})
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if cfg.KeepaliveInterval != 60*time.Second || cfg.KeepalivePath != "/" {
+		t.Fatalf("got interval %s path %q, want 60s and /", cfg.KeepaliveInterval, cfg.KeepalivePath)
+	}
+}
+
+func TestKeepaliveSettings(t *testing.T) {
+	cfg, errs := load(t, map[string]string{"TARGET_ADDR": "db:5432", "KEEPALIVE_INTERVAL": "0"})
+	if len(errs) > 0 || cfg.KeepaliveInterval != 0 {
+		t.Fatalf("0 should disable the keep-alive, got %s %v", cfg.KeepaliveInterval, errs)
+	}
+
+	cfg, errs = load(t, map[string]string{"TARGET_ADDR": "http://db:8086", "KEEPALIVE_INTERVAL": "45s", "KEEPALIVE_PATH": "/api/"})
+	if len(errs) > 0 || cfg.KeepaliveInterval != 45*time.Second || cfg.KeepalivePath != "/api/" {
+		t.Fatalf("got %s %q %v", cfg.KeepaliveInterval, cfg.KeepalivePath, errs)
+	}
+
+	for name, env := range map[string]map[string]string{
+		"not a duration": {"KEEPALIVE_INTERVAL": "soon"},
+		"negative":       {"KEEPALIVE_INTERVAL": "-5s"},
+		"relative path":  {"KEEPALIVE_PATH": "api/"},
+	} {
+		env["TARGET_ADDR"] = "http://db:8086"
+		if _, errs := load(t, env); len(errs) == 0 {
+			t.Errorf("%s: want a configuration error", name)
 		}
 	}
 }
