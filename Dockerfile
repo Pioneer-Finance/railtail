@@ -1,4 +1,4 @@
-FROM golang:1.23.4 AS builder
+FROM golang:1.26.8 AS builder
 
 WORKDIR /app
 
@@ -8,12 +8,14 @@ RUN go mod download
 
 COPY . ./
 
-RUN CGO_ENABLED=0 go build -o railtail -ldflags="-w -s" ./.
+RUN CGO_ENABLED=0 go build -trimpath -o railtail -ldflags="-w -s" ./.
 
-FROM gcr.io/distroless/static
+FROM gcr.io/distroless/static-debian12:nonroot
 
 WORKDIR /app
 
 COPY --from=builder /app/railtail /usr/local/bin/railtail
+
+USER nonroot:nonroot
 
 ENTRYPOINT ["/usr/local/bin/railtail"]

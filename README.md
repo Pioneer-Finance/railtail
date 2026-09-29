@@ -41,8 +41,22 @@ proxy, ensure you have a `http://` or `https://` in your `TARGET_ADDR`.
 | `TS_AUTH_KEY`        | N/A                | Required. Tailscale auth key. Must be set in environment.                                                                                                     |
 | `TS_LOGIN_SERVER`    | `-ts-login-server` | Optional. Base URL of the control server. If you are using Headscale for your control server, use your Headscale instance's url. Defaults to using Tailscale. |
 | `TS_STATEDIR_PATH`   | `-ts-state-dir`    | Optional. Tailscale state dir. Defaults to `/tmp/railtail`.                                                                                                   |
+| `INSECURE_SKIP_VERIFY` | `-insecure-skip-verify` | Optional. Skip TLS certificate verification of an `https://` target. Defaults to `false`. Only enable for a target with a self-signed certificate you cannot replace. |
 
 _CLI arguments will take precedence over environment variables._
+
+### Security notes
+
+- railtail does not authenticate its callers: anything that can reach
+  `LISTEN_PORT` can reach `TARGET_ADDR`. Keep it on Railway's Private Network
+  and give the Tailscale node a tag with ACLs that allow it to reach only the
+  target.
+- Prefer a tagged, single-use or ephemeral auth key. With the default
+  `TS_STATEDIR_PATH` in `/tmp`, the node identity is lost on every redeploy
+  and the service re-registers with `TS_AUTH_KEY`.
+- The image runs as the distroless `nonroot` user. If you mount a Railway
+  volume for `TS_STATEDIR_PATH`, it must be writable by that user (for
+  example set `RAILWAY_RUN_UID=0`).
 
 ## About
 
