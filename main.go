@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"crypto/tls"
 	"fmt"
 	"log/slog"
@@ -64,7 +65,7 @@ func main() {
 			slog.String("target-addr", cfg.RedactedTargetAddr()),
 		)
 
-		httpClient := ts.HTTPClient()
+		httpClient := &http.Client{Transport: newTargetTransport(ts.Dial)}
 		if cfg.InsecureSkipVerify {
 			logger.Stdout.Warn("TLS certificate verification of the target is DISABLED (INSECURE_SKIP_VERIFY=true)")
 
@@ -74,6 +75,10 @@ func main() {
 		}
 
 		proxy := newHttpProxy(httpClient, cfg.TargetURL)
+
+		logKeepalive(cfg)
+		go keepWarm(context.Background(), cfg.KeepaliveInterval, cfg.RedactedTargetAddr(),
+			httpProbe(httpClient, cfg.TargetURL, cfg.KeepalivePath))
 
 		server := http.Server{
 			IdleTimeout:       60 * time.Second,
@@ -99,6 +104,10 @@ func main() {
 		slog.String("listen-addr", listenAddr),
 		slog.String("target-addr", cfg.RedactedTargetAddr()),
 	)
+
+	logKeepalive(cfg)
+	go keepWarm(context.Background(), cfg.KeepaliveInterval, cfg.RedactedTargetAddr(),
+		tcpProbe(ts.Dial, cfg.TargetAddr))
 
 	for {
 		conn, err := listener.Accept()
