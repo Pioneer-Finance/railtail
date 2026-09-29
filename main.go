@@ -47,7 +47,7 @@ func main() {
 	logger.Stdout.Info("🚀 Starting railtail",
 		slog.String("ts-hostname", cfg.TSHostname),
 		slog.String("listen-addr", listenAddr),
-		slog.String("target-addr", cfg.TargetAddr),
+		slog.String("target-addr", cfg.RedactedTargetAddr()),
 		slog.String("ts-login-server", cmp.Or(cfg.TSLoginServer, "using_default")),
 		slog.String("ts-state-dir", filepath.Join(cfg.TSStateDirPath, "railtail")),
 	)
@@ -61,28 +61,31 @@ func main() {
 	if cfg.ForwardTrafficType == config.ForwardTrafficTypeHTTP || cfg.ForwardTrafficType == config.ForwardTrafficTypeHTTPS {
 		logger.Stdout.Info("running in HTTP/s proxy mode (http(s):// scheme detected in targetAddr)",
 			slog.String("listen-addr", listenAddr),
-			slog.String("target-addr", cfg.TargetAddr),
+			slog.String("target-addr", cfg.RedactedTargetAddr()),
 		)
 
 		httpClient := ts.HTTPClient()
-		httpClient.Transport.(*http.Transport).TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true,
+		if cfg.InsecureSkipVerify {
+			logger.Stdout.Warn("TLS certificate verification of the target is DISABLED (INSECURE_SKIP_VERIFY=true)")
+
+			httpClient.Transport.(*http.Transport).TLSClientConfig = &tls.Config{
+				InsecureSkipVerify: true,
+			}
 		}
+
+		proxy := newHttpProxy(httpClient, cfg.TargetURL)
 
 		server := http.Server{
 			IdleTimeout:       60 * time.Second,
 			ReadHeaderTimeout: 5 * time.Second,
+			MaxHeaderBytes:    64 << 10,
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				forwardingInfo := []any{
+				logger.Stdout.Info("forwarding",
 					slog.String("remote-addr", r.RemoteAddr),
-					slog.String("target", cfg.TargetAddr),
-				}
+					slog.String("target", cfg.RedactedTargetAddr()),
+				)
 
-				logger.Stdout.Info("forwarding", forwardingInfo...)
-
-				if err := fwdHttp(httpClient, cfg.TargetAddr, w, r); err != nil {
-					logger.StderrWithSource.Error("failed to forward http request", append([]any{logger.ErrAttr(err)}, forwardingInfo...)...)
-				}
+				proxy.ServeHTTP(w, r)
 			}),
 		}
 
@@ -94,7 +97,7 @@ func main() {
 
 	logger.Stdout.Info("running in TCP tunnel mode (no HTTP scheme detected in targetAddr)",
 		slog.String("listen-addr", listenAddr),
-		slog.String("target-addr", cfg.TargetAddr),
+		slog.String("target-addr", cfg.RedactedTargetAddr()),
 	)
 
 	for {
@@ -107,7 +110,7 @@ func main() {
 		forwardingInfo := []any{
 			slog.String("local-addr", conn.LocalAddr().String()),
 			slog.String("remote-addr", conn.RemoteAddr().String()),
-			slog.String("target", cfg.TargetAddr),
+			slog.String("target", cfg.RedactedTargetAddr()),
 		}
 
 		logger.Stdout.Info("forwarding tcp connection", forwardingInfo...)
